@@ -1,0 +1,71 @@
+Name: codecatalyst-cfn-workflow
+SchemaVersion: 1.0
+
+Triggers:
+  - Type: PUSH
+    Branches:
+      - main
+Actions:
+  Test:
+    Identifier: aws/managed-test@v1
+    Inputs:
+      Sources:
+        - WorkflowSource
+    Outputs:
+      Reports:
+        CoverageReport:
+          Format: CLOVERXML
+          IncludePaths:
+            - "coverage/*"
+        TestReport:
+          Format: JUNITXML
+          IncludePaths:
+            - junit.xml
+    Configuration:
+      Steps:
+        - Run: npm install
+        - Run: npm run test
+  BuildBackend:
+    Identifier: aws/build@v1
+    DependsOn:
+      - Test
+    Environment:
+      Connections:
+        - Role: CodeCatalystWorkflowDevelopmentRole-tescicdpipeline
+          Name: "314208970587"
+      Name: codecatalyst-cfn-environment
+    Inputs:
+      Sources:
+        - WorkflowSource
+    Configuration:
+      Steps:
+        - Run: . ./setup-sam.sh
+        - Run: sam package --template-file sam-template.yml
+            --s3-bucket codecatalyst-cfn-us-east1-test --output-template-file 
+            sam-template-packaged.yml --region us-east-1
+    Outputs:
+      Artifacts:
+        - Name: buildArtifact
+          Files:
+            - "**/*"
+    Compute:
+      Type: EC2
+  DeployCloudFormationStack:
+    Identifier: aws/cfn-deploy@v1
+    DependsOn:
+      - BuildBackend
+    Environment:
+      Name: codecatalyst-cfn-environment
+      Connections:
+        - Name: 314208970587
+          Role: codecatalyst-deploy-role
+    Inputs:
+      Artifacts:
+        - buildArtifact
+      Sources: []
+    Configuration:
+      name: codecatalyst-cfn-stack
+      region: us-east-1
+      role-arn: arn:aws:iam::314208970587:role/codecatalyst-stack-role
+      template: ./sam-template-packaged.yml
+      capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
